@@ -6,7 +6,8 @@
 
 
 // gprs(baudrate, tx, rx) it is one to one mapping for tx and rx pin from arduino to GSM modem
-GPRS gprs(9600,8,7);
+// GPRS gprs(9600,8,7);
+GPRS gprs(9600,5,6);
 // APR33A3  busy,rec,m0,m1,m2,m3
 APR33A3 audio1(A0,A2,A1,A3,A4,A5);
 
@@ -20,8 +21,11 @@ APR33A3 audio1(A0,A2,A1,A3,A4,A5);
 #define AUDIO_PLAY_TIMES 3          // Defines the number of time the audio will be played through the phone
 #define AFTER_CALL_DELAY 10000      // 10 seconds delay after you send the call command
 #define AUDIO_CHANNEL 0             // Defines the channel on which the audio is stored
-#define CALL_SETUP_DELAY 7          // Delay required after sending ATD command to GSM
-#define CALL_WAIT_DELAY 5           // Delay after the ring so that user can pick up the phone           
+#define CALL_SETUP_DELAY 10         // Delay required after sending ATD command to GSM
+#define CALL_WAIT_DELAY 5           // Delay after the ring so that user can pick up the phone    
+#define RETRY_CALL_COUNT 3          // Retry call after particular count
+#define RETRY_CALL_DELAY 5          // Rerty call after each failure
+#define HANGUP_DELAY 5              // Dealy after call hangup
 
 
 #define NUMBER_STORE_START_LOCATION 10
@@ -170,7 +174,8 @@ void setup() {
 }
 
 void loop() {
-  const byte USER_COUNT = 2, ALERT_CYCLE = 1;
+  const byte USER_COUNT = 3, ALERT_CYCLE = 1;
+  byte i =0,k=0;
 
   if(intVal == 1)
   {
@@ -179,13 +184,17 @@ void loop() {
     for( i = 0; i< ALERT_CYCLE ; i++){
       SerialPrintFromPROGMEM(IN_ALERT_CYCLE);
       Serial.println(i);
-      for (k=0;k< USER_COUNT;k++)
+      for (k = 0; k < USER_COUNT; k++)
       {
         SerialPrintFromPROGMEM(ALERTING_USER);
         Serial.println(k);
         alertUser(k);
+        Serial.println("Alerted user success");
         delay(1000);        // Delay between alerting each user
       }
+      Serial.print("Value of k is ");
+      Serial.println(k);
+      Serial.println("Exited the user loop");
     } 
     // Set Int val to 2 to avoid re-executing the same block after alerting the user and also to avoid make the OUT0 and OUT1 low
     intVal = 2;   
@@ -428,14 +437,21 @@ void call(byte offset){
   loadPhoneNumberFromEEPROM(offset);
   SerialPrintFromPROGMEM(CALLING_NUMBER);
   Serial.println(inputCommandBuffer);
-  if(0 == gprs.callUp(inputCommandBuffer))
+  int i;
+  for(i =0 ; i< RETRY_CALL_COUNT ; i++)
   {
-    SerialPrintFromPROGMEM(CALL_SUCCESS);
+    if(0 == gprs.callUp(inputCommandBuffer))
+    {
+      SerialPrintFromPROGMEM(CALL_SUCCESS);
+      break;
+    }
+    else
+    {
+      SerialPrintFromPROGMEM(CALL_FAILURE);
+     }
+     delay(RETRY_CALL_DELAY * 1000);
   }
-  else
-  {
-    SerialPrintFromPROGMEM(CALL_FAILURE);
-  }
+  
 }
 
 // send Message
@@ -471,15 +487,19 @@ void HangUp()
 
 void alertUser(byte offset)
 {
-  sendMessage(offset);
-  delay(2000);
+  HangUp();
+  delay(HANGUP_DELAY * 1000 );
   call(offset);
   delay(CALL_SETUP_DELAY * 1000);
+  delay(CALL_WAIT_DELAY * 1000);
   delay(CALL_WAIT_DELAY * 1000);
   for (i = 0; i< AUDIO_PLAY_TIMES; i++){
     audio1.playAudioTillBusy(AUDIO_CHANNEL);
     delay(250);                               // Delay between each audio play cycle
   }
   HangUp();
+  delay(HANGUP_DELAY * 1000 );
+  sendMessage(offset);
+  delay(5000);
 }
 
