@@ -3,8 +3,6 @@
 #include <EEPROM.h>
 #include <gprs.h>
 #include <SoftwareSerial.h>
-#include "definitions.h"
-#include "setParameters.cpp"
 
 
 // gprs(baudrate, tx, rx) it is one to one mapping for tx and rx pin from arduino to GSM modem
@@ -14,8 +12,7 @@ APR33A3 audio1(A0,A2,A1,A3,A4,A5);
 
 
 //************************************************************************************************************************
-**   DEFINITIONS
-**///
+//////////////////////////////   DEFINITIONS     /////////////////////////////////////////////////////////////////////////
 
 #define STATUS_LED 13
 #define OUT0 9
@@ -23,6 +20,8 @@ APR33A3 audio1(A0,A2,A1,A3,A4,A5);
 #define AUDIO_PLAY_TIMES 3          // Defines the number of time the audio will be played through the phone
 #define AFTER_CALL_DELAY 10000      // 10 seconds delay after you send the call command
 #define AUDIO_CHANNEL 0             // Defines the channel on which the audio is stored
+#define CALL_SETUP_DELAY 7          // Delay required after sending ATD command to GSM
+#define CALL_WAIT_DELAY 5           // Delay after the ring so that user can pick up the phone           
 
 
 #define NUMBER_STORE_START_LOCATION 10
@@ -62,6 +61,15 @@ byte k = 0,i= 0;
 #define LCD_STARTUP_MESSAGE 19
 #define GSM_STARTUP_ERROR 20
 #define GSM_STARTUP_SUCCESSFULL 21
+#define IN_ALERT_CYCLE 22
+#define ALERTING_USER 23
+#define CALL_FAILURE 24
+#define SMS_FAILURE 25
+#define CALL_SUCCESS 26
+#define SMS_SUCCESS 27
+#define GSM_HANGUP_SUCCESS 28
+#define GSM_HANGUP_FAILURE 29
+
 
 
 //Store LCD Strings that are supposed to be displayed in PROGRAM Memory so as to save RAM Space
@@ -87,6 +95,16 @@ const char lcdEnteringMainCode[] PROGMEM = {"Entering main code"};
 const char lcdStartUpMessage[] PROGMEM = {"Aayud MS HSS V 2.0"};
 const char lcdGSMStartUpError[] PROGMEM = {"GSM Initialization Error"};
 const char lcdGSMStartUpSuccess[] PROGMEM = {"GSM Initialization Successfull"};
+const char lcdInAlertCycle[] PROGMEM ={"In alert cycle :"};
+const char lcdAlertingUser[] PROGMEM = {"Alerting User :"};
+const char lcdCallFailure[] PROGMEM ={"Call Failure "};
+const char lcdSMSFailure[] PROGMEM = {"SMS Send Failure "};
+const char lcdCallSuccess[] PROGMEM = {"Call Successfull "};
+const char lcdSMSSuccess[] PROGMEM = {"SMS Successfull "};
+const char lcdGSMHangUpSuccess[] PROGMEM = {"GSM Hangup Successfull"};
+const char lcdGSMHangUpFailure[] PROGMEM = {"GSM Hangup Failure"};
+
+
 
 
 
@@ -94,8 +112,13 @@ const char lcdGSMStartUpSuccess[] PROGMEM = {"GSM Initialization Successfull"};
 //Note : Add in the same order as the #define is used to reference the same
 const char* const lcd_DisplayTable[] PROGMEM = {lcdEnterCmd,lcdModifyAudio,lcdModifyPhoneNumber, lcdPressStarToStart,lcdPressHashToEnd
 ,lcdInitializing,lcdReady, lcdInvalidCommand,lcdCancelled,lcdConfirmed, lcdConfirmation, lcdEnterNumber, lcdCallingNumber,lcdHangingUp,lcdSendingMessage, lcdAskSerialData
-,lcdEnteringProgrammingMode, lcdSystemReasy, lcdEnteringMainCode, lcdStartUpMessage, lcdGSMStartUpError,lcdGSMStartUpSuccess};
+,lcdEnteringProgrammingMode, lcdSystemReasy, lcdEnteringMainCode, lcdStartUpMessage, lcdGSMStartUpError,lcdGSMStartUpSuccess, lcdInAlertCycle, lcdAlertingUser, lcdCallFailure,
+lcdSMSFailure, lcdCallSuccess, lcdSMSSuccess , lcdGSMHangUpSuccess,lcdGSMHangUpFailure  };
 
+
+//XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX//
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 char message[] = "Thief has entered the house, please take immediate action";
 
@@ -147,14 +170,35 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  const byte USER_COUNT = 2, ALERT_CYCLE = 1;
 
+  if(intVal == 1)
+  {
+    //digitalWrite(OUT0,HIGH);
+    //digitalWrite(OUT1,HIGH);
+    for( i = 0; i< ALERT_CYCLE ; i++){
+      SerialPrintFromPROGMEM(IN_ALERT_CYCLE);
+      Serial.println(i);
+      for (k=0;k< USER_COUNT;k++)
+      {
+        SerialPrintFromPROGMEM(ALERTING_USER);
+        Serial.println(k);
+        alertUser(k);
+        delay(1000);        // Delay between alerting each user
+      }
+    } 
+    // Set Int val to 2 to avoid re-executing the same block after alerting the user and also to avoid make the OUT0 and OUT1 low
+    intVal = 2;   
+   }
+   delay(1000);       // Polling delay for checking each 
 }
 
 // Functions used in interrupt routines
 void setVal()
 {
   intVal = 1;
+  digitalWrite(OUT0,HIGH);
+  digitalWrite(OUT1,HIGH);
 }
 void resetVal()
 {
@@ -233,6 +277,13 @@ void acceptAndExecuteCommand()
     {
       // Implement function to call the offset user
       call(atoi(&inputCommandBuffer[1]));
+    }
+    else if ((inputCommandBuffer[0] == 'D') || (inputCommandBuffer[0] == 'd'))
+    {
+      // Implement function to test the alert user routine
+      int value = atoi(&inputCommandBuffer[1]);
+      Serial.println(value); 
+      alertUser(value);  
     }
     else if ((inputCommandBuffer[0] == 'M')||(inputCommandBuffer[0] == 'm')) 
     {
@@ -377,7 +428,14 @@ void call(byte offset){
   loadPhoneNumberFromEEPROM(offset);
   SerialPrintFromPROGMEM(CALLING_NUMBER);
   Serial.println(inputCommandBuffer);
-  cell.Call(inputCommandBuffer);
+  if(0 == gprs.callUp(inputCommandBuffer))
+  {
+    SerialPrintFromPROGMEM(CALL_SUCCESS);
+  }
+  else
+  {
+    SerialPrintFromPROGMEM(CALL_FAILURE);
+  }
 }
 
 // send Message
@@ -385,19 +443,43 @@ void sendMessage(byte offset)
 {
   loadPhoneNumberFromEEPROM(offset);
   SerialPrintFromPROGMEM(SENDING_MESSAGE);
-  cell.Message(message);
-  cell.Rcpt(inputCommandBuffer);
-  cell.SendSMS();
+  if(0 == gprs.sendSMS(inputCommandBuffer, message))
+  {
+    // Success sending SMS
+    SerialPrintFromPROGMEM(SMS_SUCCESS);
+    
+  }
+  else
+  {
+    // Failure Sending SMS
+    SerialPrintFromPROGMEM(SMS_FAILURE);
+    
+  }
 }
 
 void HangUp()
 {
-  cell.HangUp();
+  if(0 == gprs.hangUp())
+  {
+    SerialPrintFromPROGMEM(GSM_HANGUP_SUCCESS);
+  }
+  else
+  {
+    SerialPrintFromPROGMEM(GSM_HANGUP_FAILURE);
+  }
 }
 
-void AlertUser(byte offset)
+void alertUser(byte offset)
 {
-  
-}
+  sendMessage(offset);
+  delay(2000);
+  call(offset);
+  delay(CALL_SETUP_DELAY * 1000);
+  delay(CALL_WAIT_DELAY * 1000);
+  for (i = 0; i< AUDIO_PLAY_TIMES; i++){
+    audio1.playAudioTillBusy(AUDIO_CHANNEL);
+    delay(250);                               // Delay between each audio play cycle
+  }
+  HangUp();
 }
 
